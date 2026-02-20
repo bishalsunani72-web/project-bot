@@ -1,5 +1,4 @@
 import os
-import re
 import logging
 from io import BytesIO
 from datetime import datetime
@@ -13,20 +12,17 @@ from telegram.ext import (
     filters,
 )
 
-# ReportLab (Vector Based)
+# ReportLab
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
     Spacer,
     Table,
     TableStyle,
-    PageBreak
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
 # ==========================
 # CONFIG
@@ -37,14 +33,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 logging.basicConfig(level=logging.INFO)
 
 # ==========================
-# STYLES (VECTOR SHARP)
+# STYLES
 # ==========================
 
 heading_style = ParagraphStyle(
     name="HeadingStyle",
     fontName="Helvetica-Bold",
     fontSize=16,
-    spaceAfter=10,
+    spaceAfter=8,
 )
 
 body_style = ParagraphStyle(
@@ -56,55 +52,28 @@ body_style = ParagraphStyle(
 )
 
 # ==========================
-# SMART HEADING DETECTION
+# HEADING DETECTION
 # ==========================
 
 def is_heading(line):
     line = line.strip()
-
-    # Rule 1: ALL CAPS
-    if line.isupper() and len(line) < 80:
+    if line.isupper() and len(line) < 100:
         return True
-
-    # Rule 2: Short line without period
-    if len(line) < 50 and not line.endswith("."):
-        return True
-
     return False
 
 
 # ==========================
-# TABLE DETECTION
-# ==========================
-
-def detect_table_block(text):
-    lines = text.split("\n")
-    table_data = []
-
-    for line in lines:
-        if "," in line:
-            row = [cell.strip() for cell in line.split(",")]
-            table_data.append(row)
-
-    if len(table_data) >= 2:
-        return table_data
-
-    return None
-
-
-# ==========================
-# PAGE NUMBER FUNCTION
+# PAGE NUMBER
 # ==========================
 
 def add_page_number(canvas, doc):
     page_num = canvas.getPageNumber()
-    text = f"{page_num}"
     canvas.setFont("Helvetica", 10)
-    canvas.drawRightString(580, 20, text)
+    canvas.drawRightString(580, 20, str(page_num))
 
 
 # ==========================
-# PDF GENERATOR
+# PDF GENERATOR (WORD TO WORD)
 # ==========================
 
 def generate_pdf(content):
@@ -120,42 +89,17 @@ def generate_pdf(content):
     )
 
     elements = []
+    lines = content.split("\n")
 
-    # Auto Cover Page
-    elements.append(Paragraph("PROJECT REPORT", heading_style))
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y')}", body_style))
-    elements.append(PageBreak())
+    for line in lines:
+        if not line.strip():
+            elements.append(Spacer(1, 8))
+            continue
 
-    table_data = detect_table_block(content)
-
-    # TABLE MODE
-    if table_data:
-        table = Table(table_data, hAlign="LEFT")
-
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 12),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ]))
-
-        elements.append(table)
-
-    # NORMAL TEXT MODE
-    else:
-        lines = content.split("\n")
-
-        for line in lines:
-            if not line.strip():
-                elements.append(Spacer(1, 8))
-                continue
-
-            if is_heading(line):
-                elements.append(Paragraph(line.strip(), heading_style))
-            else:
-                elements.append(Paragraph(line.strip(), body_style))
+        if is_heading(line):
+            elements.append(Paragraph(line.strip(), heading_style))
+        else:
+            elements.append(Paragraph(line.strip(), body_style))
 
     doc.build(elements, onFirstPage=add_page_number, onLaterPages=add_page_number)
 
@@ -164,32 +108,75 @@ def generate_pdf(content):
 
 
 # ==========================
-# TELEGRAM HANDLERS
+# TABLE MODE (ONLY /table)
 # ==========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📄 Send your project text.\n\n"
-        "Features:\n"
-        "• Crystal Clear Vector PDF\n"
-        "• Auto Heading Detection\n"
-        "• Auto Cover Page\n"
-        "• Professional Tables\n"
-        "• Page Numbers\n"
-        "\nNo API needed. Fully Free."
+        "Send table data like this:\n\n"
+        "Name, Age, Class\n"
+        "Ram, 14, 8\n"
+        "Shyam, 15, 9"
+    )
+
+async def handle_table_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    lines = text.strip().split("\n")
+
+    table_data = []
+    for line in lines:
+        row = [cell.strip() for cell in line.split(",")]
+        table_data.append(row)
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+
+    table = Table(table_data, hAlign="LEFT")
+
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 12),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    buffer.seek(0)
+
+    await update.message.reply_document(
+        document=buffer,
+        filename="Table_Output.pdf",
     )
 
 
+# ==========================
+# TEXT HANDLER (NORMAL MODE)
+# ==========================
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
-
-    await update.message.reply_text("Generating Professional PDF...")
 
     pdf_buffer = generate_pdf(user_text)
 
     await update.message.reply_document(
         document=pdf_buffer,
         filename="Professional_Project.pdf",
+    )
+
+
+# ==========================
+# START
+# ==========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Send your text.\n\n"
+        "• Word to word formatting\n"
+        "• Headings in ALL CAPS\n"
+        "• Use /table for tables"
     )
 
 
@@ -201,6 +188,9 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("table", table_command))
+
+    # Table data handler (after /table)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     print("Bot Running...")
